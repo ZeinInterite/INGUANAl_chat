@@ -27,6 +27,7 @@ public class MainActivity extends AppCompatActivity {
     private RecyclerView messageListView;
     private EditText editTextSenderName;
     private Adapter adapter;
+    private String name;
     private EditText editTextMessage;
     private Button buttonSend;
     private Socket clientSocket;
@@ -57,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
         buttonSend.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String message = editTextSenderName.getText().toString() + ": " + editTextMessage.getText().toString();
+                String message = name + ": " + editTextMessage.getText().toString();
                 out.println(message);
             }
         });
