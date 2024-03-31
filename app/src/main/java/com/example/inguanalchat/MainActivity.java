@@ -6,6 +6,9 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import android.annotation.SuppressLint;
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
@@ -14,11 +17,13 @@ import android.widget.Adapter;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -41,6 +46,8 @@ public class MainActivity extends AppCompatActivity {
     private BufferedReader in;
     private Message message;
     private List<Message> messageList = new ArrayList<>();
+    private ConnectivityManager connectivityManager;
+    private boolean isConnectedToInternet;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,6 +62,9 @@ public class MainActivity extends AppCompatActivity {
 
         messageListView.setLayoutManager(new LinearLayoutManager(this));
         messageListView.setAdapter(adapter);
+
+        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        checkInternetConnection();
 
         messageViewModel = new ViewModelProvider(this).get(MessageViewModel.class);
         List<Message> savedMessages = messageViewModel.getMessageList();
@@ -71,44 +81,55 @@ public class MainActivity extends AppCompatActivity {
 
                 String serverResponse;
                 while ((in != null) && (serverResponse = in.readLine()) != null) {
-                    Log.d("Server Response", serverResponse);
+                    final String response = serverResponse;
+
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Log.d("Server Response", response);
+                        }
+                    });
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }).start();
 
+
         buttonSend.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String messageContent = editTextMessage.getText().toString();
-                String currentDateTime = getCurrentDateTimeFormatted(); // Получаем текущую дату и время
-                message = new Message();
-                message.setName(name);
-                message.setMessage(messageContent);
-                message.setDate(currentDateTime);
-                messageList.add(message);
-                adapter.notifyDataSetChanged();
-
-                new AsyncTask<Void, Void, Void>() {
+                new Thread(new Runnable() {
                     @Override
-                    protected Void doInBackground(Void... voids) {
-                        if (out != null) {
-                            out.println(name + ": " + messageContent + " - " + currentDateTime); // Отправляем дату на сервер
-                            out.flush(); // Принудительно отправить данные
+                    public void run() {
+                        if (isConnectedToInternet && isServerReachable()) {
+                            new SendMessageTask().execute(editTextMessage.getText().toString());
                         } else {
-                            Log.e("PrintWriter", "PrintWriter 'out' is null. Message not sent.");
+                            if (!isConnectedToInternet) {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Toast.makeText(MainActivity.this, "Отсутствует подключение к интернету", Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                            } else {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Toast.makeText(MainActivity.this, "Не удалось подключиться к серверу", Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                            }
                         }
-                        return null;
                     }
-                }.execute();
+                }).start();
             }
         });
     }
 
     public String getCurrentDateTimeFormatted() {
         Date currentDate = new Date();
-        @SuppressLint("SimpleDateFormat") SimpleDateFormat dateFormat = new SimpleDateFormat("dd HH:mm");
+        @SuppressLint("SimpleDateFormat")    SimpleDateFormat dateFormat = new SimpleDateFormat("dd HH:mm");
         return dateFormat.format(currentDate);
     }
 
@@ -116,5 +137,66 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         messageViewModel.setMessageList(messageList);
+    }
+    private void checkInternetConnection() {
+        NetworkInfo activeNetwork = connectivityManager.getActiveNetworkInfo();
+        isConnectedToInternet = activeNetwork != null && activeNetwork.isConnectedOrConnecting();
+    }
+
+    private boolean isServerReachable() {
+        try {
+            clientSocket = new Socket();
+            clientSocket.connect(new InetSocketAddress(SERVER_ADDRESS, SERVER_PORT), 2000);
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return false;
+        } finally {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    private class SendMessageTask extends AsyncTask<String, Void, Boolean> {
+        @Override
+        protected Boolean doInBackground(String... params) {
+
+            String messageContent = params[0];
+            String currentDateTime = getCurrentDateTimeFormatted();
+
+            try {
+                if (clientSocket == null || clientSocket.isClosed()) {
+                    clientSocket = new Socket(SERVER_ADDRESS, SERVER_PORT);
+                    out = new PrintWriter(clientSocket.getOutputStream(), true);
+                    in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                }
+
+                out.println(name + ": " + messageContent + " - " + currentDateTime);
+                out.flush();
+
+                return true;
+            } catch (IOException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(Boolean isConnected) {
+            if (isConnected) {
+                String messageContent = editTextMessage.getText().toString();
+                String currentDateTime = getCurrentDateTimeFormatted();
+                message = new Message();
+                message.setName(name);
+                message.setMessage(messageContent);
+                message.setDate(currentDateTime);
+                messageList.add(message);
+                adapter.notifyDataSetChanged();
+            } else {
+            }
+
+        }
     }
 }
